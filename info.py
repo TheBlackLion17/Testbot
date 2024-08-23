@@ -6,6 +6,12 @@ from pyrogram import Client
 from time import time
 import logging 
 
+LOGGER = logging.getLogger(__name__)
+
+LOGGER.setLevel(logging.INFO)
+getLogger("pyrogram").setLevel(WARNING)
+LOGGER = getLogger(__name__)
+
 SESSION = environ.get('SESSION', 'Media_search')
 API_ID = int(environ.get('API_ID', '29812636'))
 API_HASH = environ.get('API_HASH', '581c6dd6f0af0f8c8326c9b28920ae54')
