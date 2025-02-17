@@ -1,74 +1,45 @@
-import logging
-import logging.config
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pymongo import MongoClient
+from config import Config
 
-# Get logging configurations
-logging.config.fileConfig('logging.conf')
-logging.getLogger().setLevel(logging.INFO)
-logging.getLogger("pyrogram").setLevel(logging.ERROR)
-logging.getLogger("imdbpy").setLevel(logging.ERROR)
+# Initialize bot and database
+bot = Client("AutoFilterBot", api_id=Config.API_ID, api_hash=Config.API_HASH, bot_token=Config.BOT_TOKEN)
+mongo = MongoClient(Config.MONGO_URL)
+db = mongo["AutoFilterDB"]
+collection = db["files"]
 
-from pyrogram import Client, __version__
-from pyrogram.raw.all import layer
-from info import SESSION, API_ID, API_HASH, BOT_TOKEN, LOG_CHANNEL
-from typing import Union, Optional, AsyncGenerator
-from pyrogram import types 
-import pytz
-from aiohttp import web
+# Save files in the database
+@bot.on_message(filters.document | filters.video | filters.audio & filters.chat(Config.ADMIN_ID))
+async def save_file(client, message):
+    file_name = message.document.file_name if message.document else message.video.file_name
+    file_id = message.document.file_id if message.document else message.video.file_id
 
-class Bot(Client):
+    # Save file details to MongoDB
+    collection.insert_one({"file_name": file_name, "file_id": file_id})
+    await message.reply_text(f"✅ File **{file_name}** added to database!")
 
-    def __init__(self):
-        super().__init__(
-            name=SESSION,
-            api_id=API_ID,
-            api_hash=API_HASH,
-            bot_token=BOT_TOKEN,
-            workers=50,
-            plugins={"root": "plugins"},
-            sleep_threshold=5,
-        )
+# Search for files
+@bot.on_message(filters.text & filters.group)
+async def search_files(client, message):
+    query = message.text.lower()
+    results = collection.find({"file_name": {"$regex": query, "$options": "i"}})
 
+    buttons = []
+    for result in results:
+        buttons.append([InlineKeyboardButton(result["file_name"], callback_data=result["file_id"])])
     
+    if buttons:
+        await message.reply_text("📂 Here are the matching files:", reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        await message.reply_text("❌ No matching files found.")
 
-    async def iter_messages(
-        self,
-        chat_id: Union[int, str],
-        limit: int,
-        offset: int = 0,
-    ) -> Optional[AsyncGenerator["types.Message", None]]:
-        """Iterate through a chat sequentially.
-        This convenience method does the same as repeatedly calling :meth:`~pyrogram.Client.get_messages` in a loop, thus saving
-        you from the hassle of setting up boilerplate code. It is useful for getting the whole chat messages with a
-        single call.
-        Parameters:
-            chat_id (``int`` | ``str``):
-                Unique identifier (int) or username (str) of the target chat.
-                For your personal cloud (Saved Messages) you can simply use "me" or "self".
-                For a contact that exists in your Telegram address book you can use his phone number (str).
-                
-            limit (``int``):
-                Identifier of the last message to be returned.
-                
-            offset (``int``, *optional*):
-                Identifier of the first message to be returned.
-                Defaults to 0.
-        Returns:
-            ``Generator``: A generator yielding :obj:`~pyrogram.types.Message` objects.
-        Example:
-            .. code-block:: python
-                for message in app.iter_messages("pyrogram", 1, 15000):
-                    print(message.text)
-        """
-        current = offset
-        while True:
-            new_diff = min(200, limit - current)
-            if new_diff <= 0:
-                return
-            messages = await self.get_messages(chat_id, list(range(current, current+new_diff+1)))
-            for message in messages:
-                yield message
-                current += 1
+# Send file when button is clicked
+@bot.on_callback_query()
+async def send_file(client, callback_query):
+    file_id = callback_query.data
+    await callback_query.message.reply_document(file_id)
 
-
-app = Bot()
-app.run()
+# Run bot
+print("🤖 Bot is running...")
+bot.run()
